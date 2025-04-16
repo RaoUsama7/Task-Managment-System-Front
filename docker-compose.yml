@@ -1,0 +1,16 @@
+version: '3'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      # Add your environment variables here
+      # - API_URL=https://your-api-url.com
+    volumes:
+      - ./.env.local:/app/.env.local:ro 
