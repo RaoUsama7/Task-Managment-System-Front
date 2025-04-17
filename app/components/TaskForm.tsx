@@ -39,28 +39,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, users = [], onSubmit, onCance
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target;
-    
-    // Handle special case for assignedUserId
-    if (name === 'assignedUserId') {
-      if (value === '') {
-        // Unassign case
-        setFormData((prev) => ({ 
-          ...prev, 
-          assignedUserId: undefined,
-          assignedToEmail: undefined
-        }));
-      } else {
-        // Assigned to a user
-        const selectedUser = users.find(u => u.id === value);
-        setFormData((prev) => ({ 
-          ...prev, 
-          [name]: value,
-          assignedToEmail: selectedUser?.email
-        }));
-      }
-    } else {
-      setFormData((prev) => ({ ...prev, [name]: value }));
-    }
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -76,7 +55,13 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, users = [], onSubmit, onCance
     setError(null);
 
     try {
-      await onSubmit(formData);
+      // Create a copy of formData for submission, keeping any existing assignments
+      const submissionData = {
+        ...formData,
+      };
+      
+      await onSubmit(submissionData);
+      
       // Reset form after successful submission if creating new task
       if (!task) {
         setFormData({
@@ -151,30 +136,15 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, users = [], onSubmit, onCance
         </div>
       )}
 
-      {users.length > 0 && (
-        <div>
-          <label htmlFor="assignedUserId" className="block text-sm font-medium text-gray-700 mb-1">
-            Assign To
-          </label>
-          <select
-            id="assignedUserId"
-            name="assignedUserId"
-            value={formData.assignedUserId || ''}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="">Unassigned</option>
-            {users.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.email} {user.role === 'admin' ? '(Admin)' : ''}
-              </option>
-            ))}
-          </select>
-          {formData.assignedToEmail && (
-            <p className="mt-1 text-sm text-gray-500">
-              Will be assigned to: {formData.assignedToEmail}
-            </p>
-          )}
+      {/* Show assignment info if task is assigned to someone (in edit mode) */}
+      {task && task.assignedToEmail && (
+        <div className="p-3 bg-gray-50 rounded-md">
+          <p className="text-sm text-gray-600">
+            <span className="font-medium">Currently assigned to:</span> {task.assignedToEmail}
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Assignment can be changed by an admin using the Assign button.
+          </p>
         </div>
       )}
 
