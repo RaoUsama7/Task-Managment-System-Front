@@ -2,6 +2,7 @@ import React, { ReactNode } from 'react';
 import Link from 'next/link';
 import { useAuth } from '../context/AuthContext';
 import useSessionRestore from '../hooks/useSessionRestore';
+import TaskNotifications from './TaskNotifications';
 
 interface LayoutProps {
   children: ReactNode;
@@ -21,7 +22,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             Task Management System
           </Link>
           <nav>
-            <ul className="flex space-x-4">
+            <ul className="flex space-x-4 items-center">
               {isAuthenticated ? (
                 <>
                   <li>
@@ -40,6 +41,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     <Link href="/profile" className="hover:text-gray-300">
                       Profile
                     </Link>
+                  </li>
+                  <li>
+                    <TaskNotifications />
                   </li>
                   <li>
                     <button 

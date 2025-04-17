@@ -1,17 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { Task, TaskStatus, CreateTaskRequest, UpdateTaskRequest } from '../services/taskService';
+import { User } from '../services/authService';
+import { useAuth } from '../context/AuthContext';
 
 interface TaskFormProps {
   task?: Task;
+  users?: User[];
   onSubmit: (taskData: CreateTaskRequest | UpdateTaskRequest) => Promise<void>;
   onCancel: () => void;
 }
 
-const TaskForm: React.FC<TaskFormProps> = ({ task, onSubmit, onCancel }) => {
+const TaskForm: React.FC<TaskFormProps> = ({ task, users = [], onSubmit, onCancel }) => {
+  const { isAdmin, user } = useAuth();
   const [formData, setFormData] = useState<CreateTaskRequest | UpdateTaskRequest>({
     title: '',
-    description: '',
+    description: null,
     status: 'pending' as TaskStatus,
+    assignedUserId: undefined,
+    assignedToEmail: undefined
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +28,9 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onSubmit, onCancel }) => {
       setFormData({
         title: task.title,
         description: task.description,
-        status: task.status
+        status: task.status,
+        assignedUserId: task.assignedUserId,
+        assignedToEmail: task.assignedToEmail || undefined
       });
     }
   }, [task]);
@@ -31,11 +39,39 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onSubmit, onCancel }) => {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    
+    // Handle special case for assignedUserId
+    if (name === 'assignedUserId') {
+      if (value === '') {
+        // Unassign case
+        setFormData((prev) => ({ 
+          ...prev, 
+          assignedUserId: undefined,
+          assignedToEmail: undefined
+        }));
+      } else {
+        // Assigned to a user
+        const selectedUser = users.find(u => u.id === value);
+        setFormData((prev) => ({ 
+          ...prev, 
+          [name]: value,
+          assignedToEmail: selectedUser?.email
+        }));
+      }
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Simple validation - ensure title is not empty
+    if (!formData.title?.trim()) {
+      setError('Title is required');
+      return;
+    }
+    
     setIsSubmitting(true);
     setError(null);
 
@@ -45,12 +81,14 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onSubmit, onCancel }) => {
       if (!task) {
         setFormData({
           title: '',
-          description: '',
+          description: null,
           status: 'pending',
+          assignedUserId: undefined,
+          assignedToEmail: undefined
         });
       }
-    } catch (err) {
-      setError('Failed to save task. Please try again.');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save task. Please try again.');
       console.error('Error submitting task:', err);
     } finally {
       setIsSubmitting(false);
@@ -87,30 +125,58 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onSubmit, onCancel }) => {
         <textarea
           id="description"
           name="description"
-          value={formData.description}
+          value={formData.description || ''}
           onChange={handleChange}
           rows={4}
           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
       </div>
 
-      <div>
-        <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-1">
-          Status
-        </label>
-        <select
-          id="status"
-          name="status"
-          value={formData.status}
-          onChange={handleChange}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-        >
-          <option value="pending">Pending</option>
-          <option value="in_progress">In Progress</option>
-          <option value="completed">Completed</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-      </div>
+      {isAdmin && (
+        <div>
+          <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-1">
+            Status
+          </label>
+          <select
+            id="status"
+            name="status"
+            value={formData.status}
+            onChange={handleChange}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="pending">Pending</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+      )}
+
+      {users.length > 0 && (
+        <div>
+          <label htmlFor="assignedUserId" className="block text-sm font-medium text-gray-700 mb-1">
+            Assign To
+          </label>
+          <select
+            id="assignedUserId"
+            name="assignedUserId"
+            value={formData.assignedUserId || ''}
+            onChange={handleChange}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">Unassigned</option>
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.email} {user.role === 'admin' ? '(Admin)' : ''}
+              </option>
+            ))}
+          </select>
+          {formData.assignedToEmail && (
+            <p className="mt-1 text-sm text-gray-500">
+              Will be assigned to: {formData.assignedToEmail}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex justify-end space-x-3">
         <button

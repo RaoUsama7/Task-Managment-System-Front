@@ -17,6 +17,13 @@ export interface User {
   role: 'admin' | 'user';
 }
 
+export interface UserListResponse {
+  users: User[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 const TOKEN_COOKIE_NAME = 'access_token';
 
 export const authService = {
@@ -42,7 +49,8 @@ export const authService = {
   },
   
   getUsers: async (): Promise<User[]> => {
-    return apiService.get<User[]>('/users');
+    const response = await apiService.get<UserListResponse>('/users');
+    return response.users;
   },
   
   getUserProfile: async (): Promise<User> => {

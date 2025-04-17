@@ -5,9 +5,10 @@ import taskService, {
   Task, 
   CreateTaskRequest, 
   UpdateTaskRequest, 
-  AssignTaskRequest 
+  AssignTaskRequest,
+  TaskListParams
 } from '../services/taskService';
-import websocketService, { WebSocketEvent } from '../services/websocketService';
+import websocketService, { WebSocketEvent, WebSocketEventData } from '../services/websocketService';
 import { useAuth } from './AuthContext';
 
 interface TaskContextType {
@@ -18,7 +19,7 @@ interface TaskContextType {
   updateTask: (id: string, taskData: UpdateTaskRequest) => Promise<Task>;
   deleteTask: (id: string) => Promise<void>;
   assignTask: (id: string, assignData: AssignTaskRequest) => Promise<Task>;
-  fetchTasks: () => Promise<void>;
+  fetchTasks: (params?: TaskListParams) => Promise<void>;
 }
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -39,41 +40,92 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Set up WebSocket event listeners
   useEffect(() => {
     if (isAuthenticated) {
-      const handleTaskEvent = (task: Task) => {
+      const handleTaskEvent = (data: WebSocketEventData) => {
+        if (!data || !data.task) {
+          console.error(`TaskContext: Received invalid WebSocket event data:`, data);
+          return;
+        }
+        
+        const task = data.task;
+        console.log(`TaskContext: Received WebSocket event for task:`, task);
+        
         setTasks(prevTasks => {
           // Check if the task already exists in the array
           const index = prevTasks.findIndex(t => t.id === task.id);
           
           if (index !== -1) {
             // Update existing task
+            console.log(`TaskContext: Updating existing task with ID ${task.id}`);
             const newTasks = [...prevTasks];
-            newTasks[index] = task;
+            newTasks[index] = {
+              ...newTasks[index],
+              ...task,
+              updatedAt: new Date()
+            };
             return newTasks;
           } else {
             // Add new task
+            console.log(`TaskContext: Adding new task with ID ${task.id}`);
             return [...prevTasks, task];
           }
+        });
+      };
+      
+      const handleTaskStatusUpdate = (data: WebSocketEventData) => {
+        if (!data || !data.taskId || !data.status) {
+          console.error(`TaskContext: Received invalid taskStatusUpdated data:`, data);
+          return;
+        }
+        
+        console.log(`TaskContext: Received status update for task ${data.taskId}: ${data.status}`);
+        
+        setTasks(prevTasks => {
+          // Find the task with the matching ID
+          const index = prevTasks.findIndex(t => t.id === data.taskId);
+          
+          if (index !== -1) {
+            // Update the task status
+            console.log(`TaskContext: Updating status of task with ID ${data.taskId}`);
+            const newTasks = [...prevTasks];
+            newTasks[index] = {
+              ...newTasks[index],
+              status: data.status as TaskStatus,
+              updatedAt: new Date()
+            };
+            return newTasks;
+          }
+          
+          return prevTasks;
         });
       };
 
       // Register WebSocket event handlers
       const events: WebSocketEvent[] = ['taskCreated', 'taskUpdated', 'taskAssigned'];
-      const unsubscribers = events.map(event => 
-        websocketService.on(event, handleTaskEvent)
-      );
+      console.log('TaskContext: Registering WebSocket event handlers for:', events.join(', '));
+      
+      const unsubscribers = events.map(event => {
+        console.log(`TaskContext: Setting up listener for ${event} events`);
+        return websocketService.on(event, handleTaskEvent);
+      });
+      
+      // Register the status update handler separately
+      console.log('TaskContext: Setting up listener for taskStatusUpdated events');
+      const unsubscribeStatusUpdated = websocketService.on('taskStatusUpdated', handleTaskStatusUpdate);
 
       // Clean up event listeners
       return () => {
+        console.log('TaskContext: Cleaning up WebSocket event handlers');
         unsubscribers.forEach(unsubscribe => unsubscribe());
+        unsubscribeStatusUpdated();
       };
     }
   }, [isAuthenticated]);
 
-  const fetchTasks = async () => {
+  const fetchTasks = async (params?: TaskListParams) => {
     try {
       setIsLoading(true);
       setError(null);
-      const data = await taskService.getAllTasks();
+      const data = await taskService.getAllTasks(params);
       setTasks(data);
     } catch (err) {
       setError('Failed to fetch tasks');
@@ -86,7 +138,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const createTask = async (taskData: CreateTaskRequest) => {
     try {
       const newTask = await taskService.createTask(taskData);
-      setTasks(prevTasks => [...prevTasks, newTask]);
+      // Only add the task if it has a valid ID
+      if (newTask && newTask.id) {
+        setTasks(prevTasks => [...prevTasks, newTask]);
+      } else {
+        console.error('Created task has no ID:', newTask);
+        setError('Task created but has invalid data. Please refresh.');
+      }
       return newTask;
     } catch (err) {
       setError('Failed to create task');
@@ -98,9 +156,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const updateTask = async (id: string, taskData: UpdateTaskRequest) => {
     try {
       const updatedTask = await taskService.updateTask(id, taskData);
+      
+      // Update the tasks in the local state
       setTasks(prevTasks => 
-        prevTasks.map(task => task.id === id ? updatedTask : task)
+        prevTasks.map(task => task.id === id ? {...task, ...updatedTask} : task)
       );
+      
       return updatedTask;
     } catch (err) {
       setError('Failed to update task');
@@ -123,10 +184,17 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const assignTask = async (id: string, assignData: AssignTaskRequest) => {
     try {
       const updatedTask = await taskService.assignTask(id, assignData);
-      setTasks(prevTasks => 
-        prevTasks.map(task => task.id === id ? updatedTask : task)
-      );
-      return updatedTask;
+      
+      if (updatedTask && updatedTask.id) {
+        setTasks(prevTasks => 
+          prevTasks.map(task => task.id === id ? updatedTask : task)
+        );
+        return updatedTask;
+      } else {
+        console.error('Updated task has invalid data:', updatedTask);
+        setError('Task update failed with invalid data. Please refresh.');
+        throw new Error('Invalid task data received from server');
+      }
     } catch (err) {
       setError('Failed to assign task');
       console.error('Error assigning task:', err);

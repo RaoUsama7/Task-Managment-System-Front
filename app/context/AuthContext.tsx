@@ -23,6 +23,23 @@ const fetchCurrentUser = async (): Promise<User> => {
   return authService.getUserProfile();
 };
 
+// Update the WebSocket connection with user profile
+const updateWebSocketConnection = (userData: User) => {
+  const token = authService.getToken();
+  if (!token) return;
+  
+  console.log(`Establishing WebSocket connection for user ${userData.email}`);
+  
+  // Connect to the WebSocket server with user details
+  websocketService.connect(token, userData.id, userData.role);
+  
+  // Join role-specific rooms
+  if (userData.role === 'admin') {
+    console.log('Joining admin-specific WebSocket rooms');
+    websocketService.joinAdminRoom();
+  }
+};
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,19 +61,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [user]);
 
+  // Connection and authentication
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {
         if (authService.isAuthenticated()) {
           const token = authService.getToken();
           if (token) {
-            // Connect to WebSocket if authenticated
-            websocketService.connect(token);
-            
             try {
               // Try to fetch user profile from API
               const userData = await fetchCurrentUser();
               setUser(userData);
+              
+              // Connect to WebSocket with user ID and role
+              updateWebSocketConnection(userData);
             } catch (error) {
               console.warn('Failed to fetch user profile, using fallback:', error);
               
@@ -66,18 +84,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               if (storedUserInfo) {
                 // Parse stored user data
                 const parsedUserInfo = JSON.parse(storedUserInfo);
+                const userId = parsedUserInfo.id || '1';
+                const userRole = parsedUserInfo.role || 'user';
+                
                 setUser({
-                  id: parsedUserInfo.id || '1',
+                  id: userId,
                   email: parsedUserInfo.email || 'user@example.com',
-                  role: (parsedUserInfo.role === 'admin' ? 'admin' : 'user') as 'admin' | 'user',
+                  role: (userRole === 'admin' ? 'admin' : 'user') as 'admin' | 'user',
                 });
+                
+                // Connect to WebSocket
+                websocketService.connect(token, userId, userRole);
               } else {
                 // No stored user data, set default
+                const defaultUserId = '1';
                 setUser({
-                  id: '1',
+                  id: defaultUserId,
                   email: 'user@example.com',
                   role: 'user',
                 });
+                
+                // Connect with default user ID
+                websocketService.connect(token, defaultUserId, 'user');
               }
             }
           }
@@ -93,6 +121,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     checkAuthStatus();
 
     return () => {
+      // Cleanup - disconnect from WebSocket when component unmounts
+      if (user?.id) {
+        websocketService.leaveUserRoom(user.id);
+      }
       websocketService.disconnect();
     };
   }, []);
@@ -119,10 +151,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Store user info in localStorage
       localStorage.setItem('userInfo', JSON.stringify(userData));
       
-      const token = authService.getToken();
-      if (token) {
-        websocketService.connect(token);
-      }
+      // Connect to WebSocket and join user room
+      updateWebSocketConnection(userData);
       
       router.push('/dashboard');
     } catch (error) {
@@ -142,7 +172,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = () => {
+    // Properly clean up WebSocket connections
     websocketService.disconnect();
+    
+    // Clean up local storage and auth state
     localStorage.removeItem('userInfo');
     authService.logout();
     setUser(null);

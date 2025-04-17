@@ -1,20 +1,20 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Layout from "../components/Layout";
 import TaskCard from "../components/TaskCard";
 import TaskForm from "../components/TaskForm";
-import WebSocketTester from "../components/WebSocketTester";
 import { useTasks } from "../context/TaskContext";
 import { useAuth } from "../context/AuthContext";
 import { Task, TaskStatus } from "../services/taskService";
 import authService, { User } from "../services/authService";
 import useSessionRestore from "../hooks/useSessionRestore";
+import websocketService from "../services/websocketService";
 
 export default function DashboardPage() {
-  const { tasks, isLoading, error, updateTask, deleteTask, assignTask } =
+  const { tasks, isLoading: tasksLoading, error, updateTask, deleteTask, assignTask, createTask, fetchTasks } =
     useTasks();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -23,12 +23,61 @@ export default function DashboardPage() {
   const [filterStatus, setFilterStatus] = useState<TaskStatus | "all">("all");
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
-  const [showWebSocketTester, setShowWebSocketTester] = useState(false);
+  const [isFilterLoading, setIsFilterLoading] = useState(false);
 
   // Use session restore hook to ensure user data persists on refresh
   useSessionRestore();
 
-  // Filtered tasks based on status
+  // Effect to fetch tasks when filter status changes
+  useEffect(() => {
+    const fetchTasksWithFilter = async () => {
+      try {
+        setIsFilterLoading(true);
+        
+        if (filterStatus === 'all') {
+          await fetchTasks();
+        } else {
+          await fetchTasks({ status: filterStatus });
+        }
+        
+        // Track current filter for URL param synchronization
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location.href);
+          
+          if (filterStatus === 'all') {
+            url.searchParams.delete('status');
+          } else {
+            url.searchParams.set('status', filterStatus);
+          }
+          
+          window.history.replaceState({}, '', url.toString());
+        }
+      } catch (error) {
+        console.error("Error fetching filtered tasks:", error);
+      } finally {
+        setIsFilterLoading(false);
+      }
+    };
+
+    fetchTasksWithFilter();
+  }, [filterStatus]);
+
+  // Read initial filter from URL on page load
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      const status = url.searchParams.get('status');
+      
+      if (status && (status === 'pending' || status === 'in_progress' || status === 'completed')) {
+        setFilterStatus(status);
+      }
+    }
+  }, []);
+
+  // Effect to fetch users when the form is shown
+  
+
+  // Filtered tasks (client-side filtering as backup)
   const filteredTasks = tasks.filter(
     (task) => filterStatus === "all" || task.status === filterStatus
   );
@@ -51,11 +100,36 @@ export default function DashboardPage() {
   };
 
   const handleUpdateTask = async (data: Partial<Task>) => {
-    if (!editTask) return;
+    try {
+      if (editTask) {
+        // Convert Partial<Task> to UpdateTaskRequest
+        const updateData = {
+          title: data.title,
+          description: data.description === undefined ? null : data.description,
+          status: data.status,
+          assignedUserId: data.assignedUserId,
+          assignedToEmail: data.assignedToEmail || undefined // Convert null to undefined
+        };
 
-    await updateTask(editTask.id, data);
-    setShowForm(false);
-    setEditTask(null);
+        await updateTask(editTask.id, updateData);
+      } else {
+        // Convert Partial<Task> to CreateTaskRequest
+        const createData = {
+          title: data.title || '', // Ensure title is never undefined
+          description: data.description === undefined ? null : data.description,
+          status: data.status || 'pending',
+          assignedUserId: data.assignedUserId,
+          assignedToEmail: data.assignedToEmail || undefined
+        };
+
+        await createTask(createData);
+      }
+      setShowForm(false);
+      setEditTask(null);
+    } catch (error) {
+      console.error("Error saving task:", error);
+      // You could set an error state here to display to the user
+    }
   };
 
   const handleStatusChange = async (id: string, status: TaskStatus) => {
@@ -83,28 +157,95 @@ export default function DashboardPage() {
     }
   };
 
+  const handleStatusFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newStatus = e.target.value as TaskStatus | "all";
+    setFilterStatus(newStatus);
+  };
+
+  // Define function to handle joining rooms for tasks
+  const joinTaskRooms = (tasks: Task[]) => {
+    if (!websocketService.isConnected()) return;
+    
+    console.log('Joining task rooms for visible tasks');
+    tasks.forEach(task => {
+      if (task.id) {
+        websocketService.joinTaskRoom(task.id);
+      }
+    });
+  };
+
+  // Clean up task rooms when unmounting
+  useEffect(() => {
+    return () => {
+      console.log('Cleaning up task rooms');
+      filteredTasks.forEach(task => {
+        if (task.id) {
+          websocketService.leaveTaskRoom(task.id);
+        }
+      });
+    };
+  }, [filteredTasks]);
+
+  // Join task rooms when tasks change
+  useEffect(() => {
+    joinTaskRooms(filteredTasks);
+  }, [filteredTasks]);
+
+  // Join task room when editing a specific task
+  useEffect(() => {
+    if (editTask?.id) {
+      websocketService.joinTaskRoom(editTask.id);
+      
+      return () => {
+        websocketService.leaveTaskRoom(editTask.id);
+      };
+    }
+  }, [editTask]);
+
+  // Join task room for task assignment
+  useEffect(() => {
+    if (taskToAssign) {
+      websocketService.joinTaskRoom(taskToAssign);
+      
+      return () => {
+        if (taskToAssign) {
+          websocketService.leaveTaskRoom(taskToAssign);
+        }
+      };
+    }
+  }, [taskToAssign]);
+
   return (
     <Layout>
       <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-2xl font-bold">Task Dashboard</h1>
         
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-          <div>
-            <label htmlFor="status-filter" className="block text-sm font-medium text-gray-700">
-              Filter by Status
-            </label>
-            <select
-              id="status-filter"
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value as TaskStatus | "all")}
-              className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+          <div className="flex flex-wrap gap-2 mb-4">
+            <button
+              onClick={() => setFilterStatus('all')}
+              className={`px-3 py-1 rounded-md ${filterStatus === 'all' ? 'bg-gray-800 text-white' : 'bg-gray-200 text-gray-700'}`}
             >
-              <option value="all">All Tasks</option>
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
+              All
+            </button>
+            <button
+              onClick={() => setFilterStatus('pending')}
+              className={`px-3 py-1 rounded-md ${filterStatus === 'pending' ? 'bg-yellow-500 text-white' : 'bg-yellow-100 text-yellow-800'}`}
+            >
+              Pending
+            </button>
+            <button
+              onClick={() => setFilterStatus('in_progress')}
+              className={`px-3 py-1 rounded-md ${filterStatus === 'in_progress' ? 'bg-blue-500 text-white' : 'bg-blue-100 text-blue-800'}`}
+            >
+              In Progress
+            </button>
+            <button
+              onClick={() => setFilterStatus('completed')}
+              className={`px-3 py-1 rounded-md ${filterStatus === 'completed' ? 'bg-green-500 text-white' : 'bg-green-100 text-green-800'}`}
+            >
+              Completed
+            </button>
           </div>
           
           {isAdmin && (
@@ -112,25 +253,15 @@ export default function DashboardPage() {
               onClick={() => {
                 setEditTask(null);
                 setShowForm(true);
+                fetchUsers();
               }}
               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
               Create New Task
             </button>
           )}
-          
-          <button
-            onClick={() => setShowWebSocketTester(!showWebSocketTester)}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-          >
-            {showWebSocketTester ? 'Hide WebSocket Tester' : 'Show WebSocket Tester'}
-          </button>
         </div>
       </div>
-
-      {showWebSocketTester && (
-        <WebSocketTester />
-      )}
 
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
@@ -138,7 +269,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {isLoading ? (
+      {tasksLoading || isFilterLoading ? (
         <div className="text-center py-8">
           <p>Loading tasks...</p>
         </div>
@@ -148,16 +279,18 @@ export default function DashboardPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredTasks.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              onEdit={handleEditTask}
-              onDelete={handleDeleteTask}
-              onAssign={handleAssignTask}
-              onStatusChange={handleStatusChange}
-            />
-          ))}
+          {filteredTasks
+            .filter(task => task.id)
+            .map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                onEdit={handleEditTask}
+                onDelete={handleDeleteTask}
+                onAssign={handleAssignTask}
+                onStatusChange={handleStatusChange}
+              />
+            ))}
         </div>
       )}
 
@@ -170,6 +303,7 @@ export default function DashboardPage() {
             </h2>
             <TaskForm
               task={editTask || undefined}
+              users={users}
               onSubmit={handleUpdateTask}
               onCancel={() => {
                 setShowForm(false);
@@ -181,7 +315,7 @@ export default function DashboardPage() {
       )}
 
       {/* Assign Task Modal */}
-      {assignModalOpen && (
+      {assignModalOpen && isAdmin && (
         <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-semibold mb-4">Assign Task</h2>
@@ -205,7 +339,7 @@ export default function DashboardPage() {
                   onChange={(e) => setAssignToUserId(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
-                  <option value="">Select a user</option>
+                  <option value="">Unassign</option>
                   {users.map((user) => (
                     <option key={user.id} value={user.id}>
                       {user.email} {user.role === "admin" ? "(Admin)" : ""}
@@ -228,10 +362,10 @@ export default function DashboardPage() {
               </button>
               <button
                 onClick={handleAssignSubmit}
-                disabled={!assignToUserId || loadingUsers}
+                disabled={loadingUsers}
                 className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50"
               >
-                Assign
+                {assignToUserId ? 'Assign' : 'Unassign'}
               </button>
             </div>
           </div>
