@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import websocketService, { WebSocketEventData } from '../services/websocketService';
 import { Task, TaskStatus } from '../services/taskService';
 import { useAuth } from '../context/AuthContext';
+import { X } from 'lucide-react';
 
 interface TaskNotification {
   id: string;
@@ -12,28 +13,48 @@ interface TaskNotification {
   seen: boolean;
 }
 
-// Toast notification component
-const Toast = ({ message, type }: { message: string, type: string }) => {
-  const getBgColor = (type: string) => {
-    switch (type) {
+const getBgColor = (type: string) => {
+  switch (type) {
+    case 'create':
+      return 'bg-green-600';
+    case 'update':
+      return 'bg-blue-600';
+    case 'assign':
+      return 'bg-purple-600';
+    case 'status':
+      return 'bg-orange-600';
+    default:
+      return 'bg-gray-600';
+  }
+};
+
+const Toast = ({ notification, onClose }: { notification: TaskNotification, onClose: () => void }) => {
+  const getBgColor = () => {
+    switch (notification.type) {
       case 'create':
         return 'bg-green-500';
       case 'update':
         return 'bg-blue-500';
       case 'assign':
-        return 'bg-yellow-500';
-      case 'status':
         return 'bg-purple-500';
+      case 'status':
+        return 'bg-orange-500';
       default:
         return 'bg-gray-500';
     }
   };
 
   return (
-    <div
-      className={`${getBgColor(type)} text-white p-4 rounded-md shadow-lg mb-4 fixed bottom-4 right-4 z-50 animate-slide-up`}
+    <div 
+      className={`${getBgColor()} text-white p-4 rounded shadow-lg flex justify-between items-center animate-slide-up mb-2`}
     >
-      <p>{message}</p>
+      <span>{notification.message}</span>
+      <button 
+        onClick={onClose} 
+        className="ml-4 text-white hover:text-gray-200 focus:outline-none"
+      >
+        <X size={18} />
+      </button>
     </div>
   );
 };
@@ -42,7 +63,7 @@ const TaskNotifications: React.FC = () => {
   const [notifications, setNotifications] = useState<TaskNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unseenCount, setUnseenCount] = useState(0);
-  const [toast, setToast] = useState<{ message: string, type: string } | null>(null);
+  const [toast, setToast] = useState<TaskNotification | null>(null);
   const [toastTimeout, setToastTimeout] = useState<NodeJS.Timeout | null>(null);
   const { isAuthenticated, user, isAdmin } = useAuth();
 
@@ -160,7 +181,16 @@ const TaskNotifications: React.FC = () => {
         setToastTimeout(null);
       }
       
-      setToast({ message, type });
+      const notification: TaskNotification = {
+        id: Math.random().toString(36).substring(2, 9),
+        type: type as 'create' | 'update' | 'assign' | 'status',
+        message,
+        timestamp: new Date(),
+        seen: false,
+        task: {} as Task
+      };
+      
+      setToast(notification);
     };
 
     // Register WebSocket event handlers
@@ -281,8 +311,8 @@ const TaskNotifications: React.FC = () => {
       {/* Toast Notification */}
       {toast && (
         <Toast 
-          message={toast.message} 
-          type={toast.type} 
+          notification={toast} 
+          onClose={closeToast} 
         />
       )}
     </>
