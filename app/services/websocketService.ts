@@ -45,7 +45,7 @@ export const websocketService = {
       console.log('WebSocket already connected, skipping connection attempt');
       // If already connected but user ID or role has changed, update rooms
       if ((userId && userId !== currentUserId) || (userRole && userRole !== currentUserRole)) {
-        this.updateUserRooms(userId, userRole);
+        websocketService.updateUserRooms(userId, userRole);
       }
       return;
     }
@@ -87,7 +87,7 @@ export const websocketService = {
       console.log(`Transport: ${socket?.io.engine.transport.name}`);
       
       // Join appropriate rooms based on user info
-      this.updateUserRooms(currentUserId, currentUserRole);
+      websocketService.updateUserRooms(currentUserId, currentUserRole);
     });
 
     socket.on('connect_error', (error) => {
@@ -105,11 +105,11 @@ export const websocketService = {
       console.log(`Reconnected to WebSocket server after ${attemptNumber} attempts`);
       
       // Rejoin rooms after reconnection
-      this.updateUserRooms(currentUserId, currentUserRole);
+      websocketService.updateUserRooms(currentUserId, currentUserRole);
       
       // Rejoin any task rooms
       joinedTaskRooms.forEach(taskId => {
-        this.joinTaskRoom(taskId);
+        websocketService.joinTaskRoom(taskId);
       });
     });
 
@@ -154,11 +154,11 @@ export const websocketService = {
     
     // Join appropriate rooms based on user info
     if (userId) {
-      this.joinUserRoom(userId);
+      websocketService.joinUserRoom(userId);
     }
     
     if (userRole === 'admin') {
-      this.joinAdminRoom();
+      websocketService.joinAdminRoom();
     }
   },
   
@@ -237,16 +237,16 @@ export const websocketService = {
     
     // Leave all rooms before disconnecting
     if (currentUserId) {
-      this.leaveUserRoom(currentUserId);
+      websocketService.leaveUserRoom(currentUserId);
     }
     
     if (currentUserRole === 'admin') {
-      this.leaveAdminRoom();
+      websocketService.leaveAdminRoom();
     }
     
     // Leave all task rooms
     joinedTaskRooms.forEach(taskId => {
-      this.leaveTaskRoom(taskId);
+      websocketService.leaveTaskRoom(taskId);
     });
     
     console.log('Disconnecting from WebSocket server...');

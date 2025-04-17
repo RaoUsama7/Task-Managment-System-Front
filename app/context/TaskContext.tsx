@@ -6,7 +6,8 @@ import taskService, {
   CreateTaskRequest, 
   UpdateTaskRequest, 
   AssignTaskRequest,
-  TaskListParams
+  TaskListParams,
+  TaskStatus
 } from '../services/taskService';
 import websocketService, { WebSocketEvent, WebSocketEventData } from '../services/websocketService';
 import { useAuth } from './AuthContext';
